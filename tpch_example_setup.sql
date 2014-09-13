@@ -5,7 +5,7 @@ CREATE SERVER testserver1 FOREIGN DATA WRAPPER ppg_fdw options (host 'localhost'
 
 CREATE USER MAPPING FOR public SERVER testserver1 OPTIONS (user 'postgres', password '');
 
-update pg_catalog.pg_foreign_server set srvoptions=array['host1=127.0.0.1:5430:postgres','host2=127.0.0.1:5431:postgres'];
+update pg_catalog.pg_foreign_server set srvoptions=array['host1=127.0.0.1:5430:postgres','host2=127.0.0.1:5431:postgres'] where srvname = 'testserver1';
 
 CREATE FOREIGN TABLE NATION  ( N_NATIONKEY  INTEGER NOT NULL,
                             N_NAME       CHAR(25) NOT NULL,

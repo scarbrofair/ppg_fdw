@@ -1,7 +1,6 @@
-/* contrib/postgres_fdw/postgres_fdw--1.0.sql */
-/*cp ./ppg_fdw--1.0.sql /usr/local/PG93/share/postgresql/extension/ppg_fdw--1.0.sql   */
-/* cp ppg_fdw.control  /usr/local/PG93/share/postgresql/extension/ */
-/*cp ppg_fdw.so /usr/local/PG93/lib/postgresql/   */
+/* cp ./ppg_fdw--1.0.sql /usr/local/PG93/share/postgresql/extension   */
+/* cp ./ppg_fdw.control  /usr/local/PG93/share/postgresql/extension/ */
+/*cp ./ppg_fdw.so /usr/local/PG93/lib/postgresql/   */
 /*
 
 */
