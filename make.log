@@ -1,0 +1,6 @@
+make -C ../../src/interfaces/libpq all
+make[1]: 进入目录“/home/yupeng/workspace/dw_src/postgresql-9.3beta1/src/interfaces/libpq”
+make[1]: 对“all”无需做任何事。
+make[1]: 离开目录“/home/yupeng/workspace/dw_src/postgresql-9.3beta1/src/interfaces/libpq”
+gcc -O2 -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -g -fpic -I../../src/interfaces/libpq -I. -I. -I../../src/include -D_GNU_SOURCE   -c -o ppg_planner.o ppg_planner.c
+gcc -O2 -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -g -fpic -shared -o ppg_fdw.so ppg_planner.o postgres_fdw.o option.o deparse.o connection.o -L../../src/port -L../../src/common -Wl,--as-needed -Wl,-rpath,'/usr/local/PG93/lib',--enable-new-dtags  -L../../src/interfaces/libpq -lpq 
