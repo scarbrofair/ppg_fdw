@@ -98,57 +98,6 @@ PGconn **
 GetConnection(ForeignServer *server, UserMapping *user,
 			  bool will_prep_stmt)
 {
-/*	bool		found;
-	ConnCacheEntry *entry;
-	ConnCacheKey key;
-	if (ConnectionHash == NULL)
-	{
-		HASHCTL		ctl;
-
-		MemSet(&ctl, 0, sizeof(ctl));
-		ctl.keysize = sizeof(ConnCacheKey);
-		ctl.entrysize = sizeof(ConnCacheEntry);
-		ctl.hash = tag_hash;
-		ctl.hcxt = CacheMemoryContext;
-		ConnectionHash = hash_create("postgres_fdw connections", 8,
-									 &ctl,
-								   HASH_ELEM | HASH_FUNCTION | HASH_CONTEXT);
-
-		RegisterXactCallback(pgfdw_xact_callback, NULL);
-		RegisterSubXactCallback(pgfdw_subxact_callback, NULL);
-	}
-	xact_got_connection = true;
-	key.serverid = server->serverid;
-	key.userid = user->userid;
-
-	entry = hash_search(ConnectionHash, &key, HASH_ENTER, &found);
-	if (!found)
-	{
-		entry->conns = NULL;
-		entry->xact_depth = 0;
-		entry->have_prep_stmt = false;
-		entry->have_error = false;
-	}
-
-	if (entry->conns == NULL)
-	{
-
-		entry->xact_depth = 0;
-		entry->have_prep_stmt = false;
-		entry->have_error = false;
-		entry->conns = connect_pg_server(server, user);
-		elog(DEBUG3, "new postgres_fdw connection %p for server \"%s\"",
-			 entry->conns, server->servername);
-	}
-*/
-	/*
-	 * Start a new transaction or subtransaction if needed.
-	 */
-	//begin_remote_xact(entry);
-
-	/* Remember if caller will prepare statements */
-	//entry->have_prep_stmt |= will_prep_stmt;
-
 	return connect_pg_server(server, user);
 }
 
@@ -287,7 +236,7 @@ PGconn* connectDB(const char *URI, const char* user, const char*pwd)
 	schema = (const char *) palloc(( cur - pre + 1) * sizeof(char));;
 	strncpy(schema, pre, cur - pre);
 	schema[cur-pre] = 0;
-	elog(INFO, "connect host %s port %s database_name %s user %s pwd %s\n", host, port, schema, user, pwd);
+	//elog(INFO, "connect host %s port %s database_name %s user %s pwd %s\n", host, port, schema, user, pwd);
 	keywords[0] = "fallback_application_name";
 	values[0] = "postgres_fdw";
 	keywords[1] = "client_encoding";
@@ -356,8 +305,8 @@ configure_remote_session(PGconn *conn)
 {
 	int			remoteversion = PQserverVersion(conn);
 
-	/* Force the search path to contain only pg_catalog (see deparse.c) */
-	do_sql_command(conn, "SET search_path = pg_catalog");
+	/* currently, we assume the schema of all the foreign tables is public */
+	do_sql_command(conn, "SET search_path = public");
 
 	/*
 	 * Set remote timezone; this is basically just cosmetic, since all
