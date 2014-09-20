@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * deparse.c
- *		  Query deparser for postgres_fdw
+ *		  Query deparser for ppg_fdw
  *
  * This file includes functions that examine query WHERE clauses to see
  * whether they're safe to send to the remote server for execution, as
@@ -26,7 +26,7 @@
  * Portions Copyright (c) 2012-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/deparse.c
+ *		  contrib/ppg_fdw/deparse.c
  *
  *-------------------------------------------------------------------------
  */

@@ -6,7 +6,7 @@
  * Portions Copyright (c) 2012-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/postgres_fdw.h
+ *		  contrib/ppg_fdw/postgres_fdw.h
  *
  *-------------------------------------------------------------------------
  */

@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * connection.c
- *		  Connection management functions for postgres_fdw
+ *		  Connection management functions for ppg_fdw
  *
  * Portions Copyright (c) 2012-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/connection.c
+ *		  contrib/ppg_fdw/connection.c
  *
  *-------------------------------------------------------------------------
  */
@@ -497,71 +497,6 @@ pgfdw_xact_callback(XactEvent event, void *arg)
 	/* Quick exit if no connections were touched in this transaction. */
 	if (!xact_got_connection)
 		return;
-/*
-	hash_seq_init(&scan, ConnectionHash);
-	while ((entry = (ConnCacheEntry *) hash_seq_search(&scan)))
-	{
-		PGresult   *res;
-		if (entry->conn == NULL || entry->xact_depth == 0)
-			continue;
-
-		elog(DEBUG3, "closing remote transaction on connection %p",
-			 entry->conn);
-
-		switch (event)
-		{
-			case XACT_EVENT_PRE_COMMIT:
-				do_sql_command(entry->conn, "COMMIT TRANSACTION");
-				if (entry->have_prep_stmt && entry->have_error)
-				{
-					res = PQexec(entry->conn, "DEALLOCATE ALL");
-					PQclear(res);
-				}
-				entry->have_prep_stmt = false;
-				entry->have_error = false;
-				break;
-			case XACT_EVENT_PRE_PREPARE:
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("cannot prepare a transaction that modified remote tables")));
-				break;
-			case XACT_EVENT_COMMIT:
-			case XACT_EVENT_PREPARE:
-				elog(ERROR, "missed cleaning up connection during pre-commit");
-				break;
-			case XACT_EVENT_ABORT:
-				entry->have_error = true;
-				res = PQexec(entry->conn, "ABORT TRANSACTION");
-				if (PQresultStatus(res) != PGRES_COMMAND_OK)
-					pgfdw_report_error(WARNING, res, true,
-									   "ABORT TRANSACTION");
-				else
-				{
-					PQclear(res);
-					if (entry->have_prep_stmt && entry->have_error)
-					{
-						res = PQexec(entry->conn, "DEALLOCATE ALL");
-						PQclear(res);
-					}
-					entry->have_prep_stmt = false;
-					entry->have_error = false;
-				}
-				break;
-		}
-
-		entry->xact_depth = 0;
-	
-		if (PQstatus(entry->conn) != CONNECTION_OK ||
-			PQtransactionStatus(entry->conn) != PQTRANS_IDLE)
-		{
-			elog(DEBUG3, "discarding connection %p", entry->conn);
-			PQfinish(entry->conn);
-			entry->conn = NULL;
-		}
-	}
-
-	xact_got_connection = false;
-	cursor_number = 0;*/
 }
 
 /*
@@ -583,37 +518,4 @@ pgfdw_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
 	/* Quick exit if no connections were touched in this transaction. */
 	if (!xact_got_connection)
 		return;
-/*
-	curlevel = GetCurrentTransactionNestLevel();
-	hash_seq_init(&scan, ConnectionHash);
-	while ((entry = (ConnCacheEntry *) hash_seq_search(&scan)))
-	{
-		PGresult   *res;
-		char		sql[100];
-		if (entry->conn == NULL || entry->xact_depth < curlevel)
-			continue;
-
-		if (entry->xact_depth > curlevel)
-			elog(ERROR, "missed cleaning up remote subtransaction at level %d",
-				 entry->xact_depth);
-
-		if (event == SUBXACT_EVENT_PRE_COMMIT_SUB)
-		{
-			snprintf(sql, sizeof(sql), "RELEASE SAVEPOINT s%d", curlevel);
-			do_sql_command(entry->conn, sql);
-		}
-		else
-		{
-			entry->have_error = true;
-			snprintf(sql, sizeof(sql),
-					 "ROLLBACK TO SAVEPOINT s%d; RELEASE SAVEPOINT s%d",
-					 curlevel, curlevel);
-			res = PQexec(entry->conn, sql);
-			if (PQresultStatus(res) != PGRES_COMMAND_OK)
-				pgfdw_report_error(WARNING, res, true, sql);
-			else
-				PQclear(res);
-		}
-		entry->xact_depth--;
-	}*/
 }

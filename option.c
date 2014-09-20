@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * option.c
- *		  FDW option handling for postgres_fdw
+ *		  FDW option handling for ppg_fdw
  *
  * Portions Copyright (c) 2012-2013, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  contrib/postgres_fdw/option.c
+ *		  contrib/ppg_fdw/option.c
  *
  *-------------------------------------------------------------------------
  */
