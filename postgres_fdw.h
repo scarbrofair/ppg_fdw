@@ -37,7 +37,7 @@ extern void pgfdw_report_error(int elevel, PGresult *res, bool clear,
 extern Plan *ppg_subquery_planner(PlannerGlobal *glob, Query *parse,
                  PlannerInfo *parent_root,
                  bool hasRecursion, double tuple_fraction,
-                 PlannerInfo **subroot, List **outTlist);
+                 PlannerInfo **subroot);
 /* in option.c */
 extern int ExtractConnectionOptions(List *defelems,
 						 const char **keywords,

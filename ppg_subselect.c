@@ -65,8 +65,9 @@ static void handleJt(Query*parse, Node* jtnode, SubPlanPath *planPath)
 		RangeTblEntry *rte = rt_fetch(varno, parse->rtable);
 		if (rte->rtekind == RTE_SUBQUERY) {
 			Query* subquery = rte->subquery; 
+			// reserve the orignal target list, because target list can be changed in ppg_subquery_planner
+			List *orignalTlist = copyObject(subquery->targetList);
 			PlannerInfo *subroot;
-			List	    *outTlist;
 			StringInfoData buf;
 			initStringInfo(&buf);
 			// Give it a unique name 
@@ -75,19 +76,39 @@ static void handleJt(Query*parse, Node* jtnode, SubPlanPath *planPath)
 			memcpy(rte->alias->aliasname, buf.data, strlen(buf.data));
 			rte->alias->aliasname[strlen(buf.data)] = 0;
 
-			Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subquery, planPath->root, false, 0.0, &subroot, &outTlist);
+			Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subquery, planPath->root, false, 0.0, &subroot);
 			sub_plan = set_plan_references(subroot, sub_plan);
 			planPath->root->glob->subplans = lappend(planPath->root->glob->subplans, sub_plan);
 			planPath->root->glob->subroots = lappend(planPath->root->glob->subroots, subroot);
-			
-			subquery->targetList = outTlist;
+			subquery->targetList = orignalTlist;
 			SubPlanPath *subplanPath = (SubPlanPath *) palloc(sizeof(SubPlanPath));
 			subplanPath->source = (Node*)rte;
 			subplanPath->type = InFrom ;
 			subplanPath->planID = list_length(planPath->root->glob->subplans);
 			subplanPath->subPlanList = NULL;
 			planPath->subPlanList = lappend(planPath->subPlanList, subplanPath);
-		
+			
+			// Revise the subquery for this RangeTblEntry
+			Query	   *qry = makeNode(Query);		
+			qry->commandType = CMD_SELECT;
+			RangeTblRef *rtr = makeNode(RangeTblRef);
+			qry->rtable = list_make1(rte);
+			rtr->rtindex = 1;	
+			qry->jointree = makeFromExpr(list_make1(rtr), NULL);
+			TargetEntry *oldTe = lfirst(list_head(subquery->targetList));
+			Var *var = makeVar(1, 1, exprType(((Node*)(oldTe->expr))), exprTypmod(((Node*)(oldTe->expr))), -1,  0);
+			RangeTblEntry *newTe = makeTargetEntry((Expr*)var, 1, oldTe->resname, false);
+			qry->targetList = list_make1(newTe);
+			qry->havingQual = NULL;
+			qry->sortClause = NIL;
+			qry->groupClause = NIL;
+			qry->distinctClause = NIL;
+			qry->hasDistinctOn = false;
+			qry->limitOffset = NULL;
+			qry->hasSubLinks = false;
+			qry->hasWindowFuncs = false;
+			qry->hasAggs = false;
+			rte->subquery = (Node*)qry;
 		} 	
 	} else if (IsA(jtnode, FromExpr)) {
 		FromExpr   *f = (FromExpr *) jtnode;
@@ -271,7 +292,6 @@ static void handle_EXPR_sublink(SubLink *sublink, SubPlanPath *planPath)
 	Query	   *subselect = (Query *) sublink->subselect;
 	Query	   *qry = makeNode(Query);
 	PlannerInfo *subroot = NULL;
-	List	    *outTlist = NIL;
 	StringInfoData buf;
 	RangeTblEntry *rte = NULL;
 	List	   *quals = NIL;
@@ -362,11 +382,10 @@ static void handle_EXPR_sublink(SubLink *sublink, SubPlanPath *planPath)
 	rtindex = list_length(planPath->root->parse->rtable);*/
 	pfree(buf.data);
 
-	Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subselect, planPath->root, false, 0.0, &subroot, &outTlist);
+	Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subselect, planPath->root, false, 0.0, &subroot);
 	sub_plan = set_plan_references(subroot, sub_plan);
 	planPath->root->glob->subplans = lappend(planPath->root->glob->subplans, sub_plan);
 	planPath->root->glob->subroots = lappend(planPath->root->glob->subroots, subroot);
-	subselect->targetList = outTlist;
 	SubPlanPath *subplanPath = (SubPlanPath *) palloc(sizeof(SubPlanPath));
 	subplanPath->source = (Node*)rte;
 	subplanPath->type = InSublink ;
@@ -488,10 +507,8 @@ ppg_make_subplan(PlannerInfo *root, Query *subquery, SubLinkType subLinkType, No
 	SubPlan    *splan;
 	TargetEntry *tent = NULL;
 	ListCell   *lc;
-	List	    *outTlist;
-	plan = ppg_subquery_planner(root->glob, subquery, root,	false, 0.0, &subroot, &outTlist);
+	plan = ppg_subquery_planner(root->glob, subquery, root,	false, 0.0, &subroot);
 	plan = set_plan_references(subroot, plan);
-	subquery->targetList = outTlist;
  	tent = (TargetEntry *) linitial(plan->targetlist);
 	splan = makeNode(SubPlan);
 	splan->subLinkType = subLinkType;

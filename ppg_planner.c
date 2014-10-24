@@ -78,11 +78,12 @@ static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
 
 static bool limit_needed(Query *parse);
 
-static List *make_subplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx, bool *need_tlist_eval);
+static List *make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx, bool *need_tlist_eval,
+									int *havingTleOffset, List**havingTle);
 
 static void locate_grouping_columns(PlannerInfo *root, List *tlist, List *sub_tlist, AttrNumber *groupColIdx);
 
-static Plan *ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTList);
+static Plan *ppg_grouping_planner(PlannerInfo *root, double tuple_fraction);
 
 static void createNewTargetEntryList(TargetListContext *targetListContext, List *targetList);
 
@@ -288,29 +289,27 @@ preprocess_groupclause(PlannerInfo *root)
 }
 
 static List *
-make_subplanTargetList(PlannerInfo *root,
-                                           List *tlist,
-                                           AttrNumber **groupColIdx,
-                                           bool *need_tlist_eval)
+make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx,
+                        bool *need_tlist_eval, int *havingTleOffset, List**havingTle)
 {
         Query      *parse = root->parse;
-        List       *sub_tlist;
+        List       *full_tlist;
         List       *non_group_cols;
-        List       *non_group_vars;
         int                     numCols;
 
         *groupColIdx = NULL;
 
         if (!parse->hasAggs && !parse->groupClause && !root->hasHavingQual &&
-                !parse->hasWindowFuncs)
+			!parse->hasWindowFuncs)
         {
                 *need_tlist_eval = true;
                 return tlist;
         }
 
-        sub_tlist = NIL;
+        full_tlist = NIL;
         non_group_cols = NIL;
         *need_tlist_eval = false;       /* only eval if not flat tlist */
+		*havingTle = NIL;
 
         numCols = list_length(parse->groupClause);
         if (numCols > 0)
@@ -332,10 +331,11 @@ make_subplanTargetList(PlannerInfo *root,
                                 TargetEntry *newtle;
 
                                 newtle = makeTargetEntry(tle->expr,
-                                                                                 list_length(sub_tlist) + 1,
-                                                                                 NULL,
+                                                                                 list_length(full_tlist) + 1,
+                                                                                 tle->resname,
                                                                                  false);
-                                sub_tlist = lappend(sub_tlist, newtle);
+								newtle->ressortgroupref = tle->ressortgroupref;
+                                full_tlist = lappend(full_tlist, newtle);
 
                                 Assert(grpColIdx[colno] == 0);  /* no dups expected */
                                 grpColIdx[colno] = newtle->resno;
@@ -354,19 +354,19 @@ make_subplanTargetList(PlannerInfo *root,
                 non_group_cols = list_copy(tlist);
         }
 
-        if (parse->havingQual)
-                non_group_cols = lappend(non_group_cols, parse->havingQual);
-
-        non_group_vars = pull_var_clause((Node *) non_group_cols,
-                                                                         PVC_RECURSE_AGGREGATES,
+        if (parse->havingQual) {
+			*havingTleOffset = length(non_group_cols) + length(full_tlist);
+			*havingTle = pull_var_clause((Node *) (parse->havingQual),
+                                                                         PVC_INCLUDE_AGGREGATES,
                                                                          PVC_INCLUDE_PLACEHOLDERS);
-        sub_tlist = add_to_flat_tlist(sub_tlist, non_group_vars);
+			non_group_cols = list_concat(non_group_cols, list_copy(*havingTle));
+		}
+        full_tlist = add_to_flat_tlist(full_tlist, non_group_cols);
 
         /* clean up cruft */
-        list_free(non_group_vars);
         list_free(non_group_cols);
 
-        return sub_tlist;
+        return full_tlist;
 }
 
 /*
@@ -374,7 +374,7 @@ make_subplanTargetList(PlannerInfo *root,
  *		Locate grouping columns in the tlist chosen by create_plan.
  *
  * This is only needed if we don't use the sub_tlist chosen by
- * make_subplanTargetList.	We have to forget the column indexes found
+ * make_fullplanTargetList.	We have to forget the column indexes found
  * by that routine and re-locate the grouping exprs in the real sub_tlist.
  */
 static void
@@ -993,7 +993,7 @@ static void postProcessSortList(Query *parse, List *tlist)
 }
 
 static Plan *
-ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
+ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 {
 	Query	   *parse = root->parse;
 	List	   *tlist = parse->targetList;
@@ -1027,9 +1027,12 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 	else
 	{
 		/* No set operations, do regular planning */
-		List	   *sub_tlist;
-		List		*oldList = parse->targetList;
-		double		sub_limit_tuples;
+		List	   *full_tlist = NIL;
+		List	   *final_tlist = NIL;
+		List	   *havingTleList = NIL;
+		int 		orignalTlistLength = 0;
+		int		havingTleOffset = -1;
+		double		sub_limit_tuples = 0.0;
 		AttrNumber *groupColIdx = NULL;
 		bool		need_tlist_eval = true;
 		long		numGroups = 0;
@@ -1038,6 +1041,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 		double		path_rows;
 		int			path_width;
 		bool		use_hashed_grouping = false;
+		orignalTlistLength = length(tlist);
 		MemSet(&agg_costs, 0, sizeof(AggClauseCosts));
 		/* A recursive query should always have setOperations */
 		Assert(!root->hasRecursion);
@@ -1049,6 +1053,10 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 		/* Preprocess targetlist, needed */
 		tlist = preprocess_targetlist(root, tlist);
 
+
+		/** Gather the full target list from parse tree*/
+		full_tlist = make_fullplanTargetList(root, tlist, &groupColIdx, &need_tlist_eval, &havingTleOffset, &havingTleList);
+
 		/*
 		 * Generate appropriate target list for subplan; may be different from
 		 * tlist if grouping or aggregation is needed.
@@ -1056,26 +1064,28 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 		TargetListContext *targetListContext = (TargetListContext *)palloc0(sizeof(TargetListContext));
 		targetListContext->intelResno = 1;
 		targetListContext->outerResno = 1;
-		createNewTargetEntryList(targetListContext, tlist);
+		createNewTargetEntryList(targetListContext, full_tlist);
 		parse->targetList = targetListContext->deparseList;
 		result_plan = (Plan*)deparsePlan(root);
 		/*
 		s = nodeToString(result_plan);
 		elog(INFO, "\n desparse plan %s\n", pretty_format_node_dump(s));*/
-
-		result_plan->plan_rows = 100; 
- 		result_plan->targetlist = targetListContext->intelList;
-		result_plan->plan_width = getTlistWidth(targetListContext->intelList);
-		//result_plan = FDW_handler->GetForeignPlan(root,NULL,0,NULL,NULL,NULL);
-		tlist = targetListContext->outerList;
-		if (outTlist != NULL) {
-			*outTlist = tlist;
+		/* Get the final target list from the revised target list */
+		if(orignalTlistLength > 0) {
+			ListCell *lc;
+			int i = 0;
+			foreach (lc, targetListContext->outerList) {
+				final_tlist = lappend(final_tlist, (TargetEntry *) lfirst(lc));
+				i++;
+				if (i == orignalTlistLength) {
+					break;
+				}
+			}
+		} else {
+			elog(ERROR, "Found no target list \n");
 		}
-		//char *s = nodeToString(targetListContext->intelList);
-		//elog(INFO, "\n intel target list  %s\n", pretty_format_node_dump(s));
-		//s = nodeToString(targetListContext->outerList);
-		//elog(INFO, "\n outer target list %s\n", pretty_format_node_dump(s));
-		sub_tlist = make_subplanTargetList(root, tlist, &groupColIdx, &need_tlist_eval);
+		
+		/* create the pathkeys for group, sort and distinct opeations */
 		root->group_pathkeys = NIL;
 		if (parse->groupClause && grouping_is_sortable(parse->groupClause)) {
         		root->group_pathkeys =	make_pathkeys_for_sortclauses(root, parse->groupClause, tlist);
@@ -1087,9 +1097,15 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
     		if (parse->distinctClause && grouping_is_sortable(parse->distinctClause)) {
         		root->distinct_pathkeys = make_pathkeys_for_sortclauses(root, parse->distinctClause, tlist);                        
 		}
-		postProcessSortList(parse, tlist);
  		root->sort_pathkeys = make_pathkeys_for_sortclauses(root, parse->sortClause, tlist);
 
+		result_plan->plan_rows = 100; 
+ 		result_plan->targetlist = targetListContext->intelList;
+		result_plan->plan_width = getTlistWidth(targetListContext->intelList);
+		//result_plan = FDW_handler->GetForeignPlan(root,NULL,0,NULL,NULL,NULL);
+		tlist = targetListContext->outerList;
+		
+		postProcessSortList(parse, targetListContext->outerList);
 		if (root->group_pathkeys) {
 			current_pathkeys = root->group_pathkeys;
 		} else if (list_length(root->distinct_pathkeys) >  list_length(root->sort_pathkeys)) {
@@ -1125,33 +1141,34 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 			use_hashed_grouping = true;
 		}
 		if (need_tlist_eval){
-			if (!is_projection_capable_plan(result_plan) && !tlist_same_exprs(sub_tlist, result_plan->targetlist)) {
-				result_plan = (Plan *) make_result(root, sub_tlist, NULL, result_plan);
+			if (!is_projection_capable_plan(result_plan) && !tlist_same_exprs(full_tlist, result_plan->targetlist)) {
+				result_plan = (Plan *) make_result(root, full_tlist, NULL, result_plan);
 			} else {
-					//result_plan->targetlist = sub_tlist;
+					result_plan->targetlist = full_tlist;
 			}
-			add_tlist_costs_to_plan(root, result_plan, sub_tlist);
+			add_tlist_costs_to_plan(root, result_plan, full_tlist);
 		} else {
 			locate_grouping_columns(root, tlist, result_plan->targetlist,
 										groupColIdx);
 		}
 		if (root->hasHavingQual) {
 			havingAggContext havingContext;
-
+			ListCell	*lc;
 			havingContext.action = Extract;
 			havingContext.oldAgg = NULL;
 			havingContext.newAgg = NULL;
-			handleAggExprInHaving(parse->havingQual, &havingContext);
-			TargetEntry *oldTe = tlist_member((Node*)(havingContext.oldAgg), oldList);
-			TargetEntry *newTe = list_nth (tlist, oldTe->resno-1) ;
-			havingContext.newAgg = (Aggref*) (newTe->expr);
-			havingContext.action = Replace;
-			handleAggExprInHaving(parse->havingQual, &havingContext);
+			foreach (lc, havingTleList) {
+				havingContext.oldAgg = (Node *) lfirst(lc);
+				TargetEntry *newTe = list_nth (targetListContext->outerList, havingTleOffset) ;
+				havingContext.newAgg = newTe->expr;
+				havingContext.action = Replace;
+				handleAggExprInHaving(parse->havingQual, &havingContext);
+			}
 		}
 
 		if (use_hashed_grouping) {
 			result_plan = (Plan *) make_agg(root,
-												tlist,
+												final_tlist,
 												(List *) parse->havingQual,
 												AGG_HASHED,
 												&agg_costs,
@@ -1175,7 +1192,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 			}
 
 			result_plan = (Plan *) make_agg(root,
-												tlist,
+												final_tlist,
 												(List *) parse->havingQual,
 												aggstrategy,
 												&agg_costs,
@@ -1195,17 +1212,14 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 			}
 
 			result_plan = (Plan *) make_group(root,
-												  tlist,
+												  final_tlist,
 												  (List *) parse->havingQual,
 												  numGroupCols,
 												  groupColIdx,
 									extract_grouping_ops(parse->groupClause),
 												  dNumGroups,
 												  result_plan);
-		} else if (list_length(tlist) != list_length(result_plan->targetlist) ) {
-			result_plan = (Plan *) make_result(root, tlist, NULL, result_plan);
-		}
-
+		} 
 	}
 
 	if (parse->distinctClause)
@@ -1297,7 +1311,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction, List **outTlist)
 Plan *ppg_subquery_planner(PlannerGlobal *glob, Query *parse,
 				 PlannerInfo *parent_root,
 				 bool hasRecursion, double tuple_fraction,
-				 PlannerInfo **subroot, List **outTlist)
+				 PlannerInfo **subroot)
 {
 	int			num_old_subplans = list_length(glob->subplans);
 	PlannerInfo *root;
@@ -1528,7 +1542,7 @@ Plan *ppg_subquery_planner(PlannerGlobal *glob, Query *parse,
 	}
 	else
 	{
-		plan = ppg_grouping_planner(root, tuple_fraction, outTlist);
+		plan = ppg_grouping_planner(root, tuple_fraction);
 		/* If it's not SELECT, we need a ModifyTable node */
 		if (parse->commandType != CMD_SELECT)
 		{
@@ -1587,7 +1601,6 @@ static PlannedStmt* ppg_planner(Query *parse, int cursorOptions, ParamListInfo b
 	PlannerInfo *root;
 	Plan	   *top_plan;
 	RangeTblEntry * finalrtable;
-	List *outTlist = NIL;
 	bool canpush = canAllPush(parse, FDW_handler);
 
 	ereport(LOG,(errmsg("ppg_planner works haha ")));
@@ -1650,7 +1663,7 @@ static PlannedStmt* ppg_planner(Query *parse, int cursorOptions, ParamListInfo b
 	}
 	/* primary planning entry point (may recurse for subqueries) */
 	top_plan = ppg_subquery_planner(glob, parse, NULL,
-								false, tuple_fraction, &root, &outTlist);
+								false, tuple_fraction, &root) ;
 
 	/*
 	 * If creating a plan for a scrollable cursor, make sure it can run
@@ -1678,7 +1691,6 @@ static PlannedStmt* ppg_planner(Query *parse, int cursorOptions, ParamListInfo b
 		PlannerInfo *subroot = (PlannerInfo *) lfirst(lr);
 		lfirst(lp) = set_plan_references(subroot, subplan);
 	}*/
-	parse->targetList = outTlist;
 	/* build the PlannedStmt result */
 	result = makeNode(PlannedStmt);
 	result->commandType = parse->commandType;

@@ -1658,6 +1658,11 @@ deparseJoinExpr(JoinExpr *node, deparse_expr_cxt *context)
 				Query * last = context->curParse;
 				context->curParse = rte->subquery;
 				deparseSelectSQLIntel(context);	
+				if (context->whereExt) {
+					appendStringInfoString(buf, " and ");
+				} else {
+					appendStringInfoString(buf, " where ");
+				}
 				context->curParse = last;
 				context->whereExt = true;
 				context->orderOnAgg = tmp;
@@ -2306,7 +2311,6 @@ void createSubplan(SubQueryPlan* subplan, RangeTblEntry *rte)
 	Assert(rte->subquery != NULL);
 	Query	*query = rte->subquery;
 	ListCell	*lc;
-	ListCell	*lc2;
 	bool		first = true;
 	int32		index = 1;
 	StringInfoData createbuf;
@@ -2316,7 +2320,7 @@ void createSubplan(SubQueryPlan* subplan, RangeTblEntry *rte)
 	appendStringInfo(&createbuf, "create table public.%s (", rte->alias->aliasname);
 	appendStringInfo(&insertbuf, "insert into public.%s values(", rte->alias->aliasname);
 	subplan->typeID = NIL;
-	forboth(lc, query->targetList, lc2, rte->alias->colnames) {
+	foreach(lc, query->targetList) {
 		TargetEntry *rt = lfirst(lc);
 		if (rt->resjunk) {
 			continue;
@@ -2327,7 +2331,7 @@ void createSubplan(SubQueryPlan* subplan, RangeTblEntry *rte)
 		} else {
 			first = false;
 		}
-		appendStringInfo(&createbuf, "\"%s\" %s", strVal(lfirst(lc2)), 
+		appendStringInfo(&createbuf, "\"%s\" %s", rt->resname, 
 			format_type_with_typemod(exprType((Node*)rt->expr), exprTypmod((Node*)rt->expr)));
 		appendStringInfo(&insertbuf, "$%d", index);
 		subplan->typeID = lappend_oid(subplan->typeID, exprType((Node*)rt->expr));
