@@ -943,17 +943,27 @@ static ForeignScan *deparsePlan(PlannerInfo *root)
 		subplan->dmethod = All;
 		subplanList = lappend(subplanList,subplan);
 	}
+
 	if (length(parse->jointree->fromlist) == 1 && length(subplanList) == 1) {
-		ListCell	*lc1;	
-		forboth (lc, subplanList, lc1, planPath.subPlanList)
-		{		
-			SubPlanPath  *subPath = lfirst(lc);
-			if (subPath->type == InFrom) {
-				SubQueryPlan* subplan = lfirst(lc);
-				subplan->dmethod = RoundRobin;
-			}
-		}	
+		Node *fromNode = lfirst(list_head(parse->jointree->fromlist));
+		if (IsA(fromNode, RangeTblRef)) {
+			int varno = ((RangeTblRef *) fromNode)->rtindex;
+			RangeTblEntry *fromRte = rt_fetch(varno, parse->rtable);
+			Node *srcNode = ((SubPlanPath  *)lfirst(list_head(planPath.subPlanList)))->source;
+            if (equal(fromRte, srcNode)) {         
+            	ListCell        *lc1;          
+	            forboth (lc, subplanList, lc1, planPath.subPlanList)
+				{                                      
+        	    	SubPlanPath  *subPath = lfirst(lc1);
+            	    if (subPath->type == InFrom) {
+						SubQueryPlan* subplan = lfirst(lc);
+						subplan->dmethod = RoundRobin;
+					}
+				}                      
+       		}
+		}             
 	}
+
 	initStringInfo(&sql);
 
 	deparseSelectSql(&sql, root, NULL, NULL);
