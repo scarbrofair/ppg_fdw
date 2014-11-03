@@ -353,13 +353,15 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
         {
                 non_group_cols = list_copy(tlist);
         }
+        full_tlist = list_concat(full_tlist, non_group_cols);
+        non_group_cols = NULL;
 
         if (parse->havingQual) {
 			*havingTleOffset = length(non_group_cols) + length(full_tlist);
 			*havingTle = pull_var_clause((Node *) (parse->havingQual),
                                                                          PVC_INCLUDE_AGGREGATES,
                                                                          PVC_INCLUDE_PLACEHOLDERS);
-			non_group_cols = list_concat(non_group_cols, list_copy(*havingTle));
+			non_group_cols = list_copy(*havingTle);
 		}
         full_tlist = add_to_flat_tlist(full_tlist, non_group_cols);
 
