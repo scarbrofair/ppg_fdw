@@ -345,7 +345,7 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
                         }
                         else
                         {
-                                non_group_cols = lappend(non_group_cols, tle->expr);
+                                non_group_cols = lappend(non_group_cols, tle);
                         }
                 }
         }
