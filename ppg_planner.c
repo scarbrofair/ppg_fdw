@@ -1098,6 +1098,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		}
 		
 		/* create the pathkeys for group, sort and distinct opeations */
+		tlist = final_tlist;
 		root->group_pathkeys = NIL;
 		if (parse->groupClause && grouping_is_sortable(parse->groupClause)) {
         		root->group_pathkeys =	make_pathkeys_for_sortclauses(root, parse->groupClause, tlist);
