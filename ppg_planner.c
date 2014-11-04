@@ -1070,7 +1070,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		List	   *final_tlist = NIL;
 		List	   *havingTleList = NIL;
 		int 		orignalTlistLength = 0;
-		int		havingTleOffset = -1;
+		List       *havingTlePosition = NIL;
 		double		sub_limit_tuples = 0.0;
 		AttrNumber *groupColIdx = NULL;
 		bool		need_tlist_eval = true;
@@ -1094,7 +1094,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 
 
 		/** Gather the full target list from parse tree*/
-		full_tlist = make_fullplanTargetList(root, tlist, &groupColIdx, &need_tlist_eval, &havingTleOffset, &havingTleList);
+		full_tlist = make_fullplanTargetList(root, tlist, &groupColIdx, &need_tlist_eval, &havingTlePosition, &havingTleList);
 
 		/*
 		 * Generate appropriate target list for subplan; may be different from
@@ -1192,17 +1192,18 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 										groupColIdx);
 		}
 		if (root->hasHavingQual) {
-			havingAggContext havingContext;
-			ListCell	*lc;
-			havingContext.action = Extract;
-			havingContext.oldAgg = NULL;
-			havingContext.newAgg = NULL;
-			foreach (lc, havingTleList) {
-				havingContext.oldAgg = (Node *) lfirst(lc);
-				TargetEntry *newTe = list_nth (targetListContext->outerList, havingTleOffset) ;
-				havingContext.newAgg = newTe->expr;
-				havingContext.action = Replace;
-				handleAggExprInHaving(parse->havingQual, &havingContext);
+                        havingAggContext havingContext;
+                        ListCell        *lc1;
+                        ListCell        *lc2;
+                        havingContext.action = Extract;
+                        havingContext.oldAgg = NULL;
+                        havingContext.newAgg = NULL;
+                        forboth (lc1, havingTleList, lc2, havingTlePosition) {
+                                havingContext.oldAgg = (Node *) lfirst(lc1);
+                                TargetEntry *newTe = list_nth (targetListContext->outerList, lfirst_int(lc2)-1) ;
+                                havingContext.newAgg = newTe->expr;
+                                havingContext.action = Replace;
+                                handleAggExprInHaving(parse->havingQual, &havingContext);
 			}
 		}
 
