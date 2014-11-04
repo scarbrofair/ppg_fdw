@@ -1157,7 +1157,7 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 			if (!is_projection_capable_plan(result_plan) && !tlist_same_exprs(full_tlist, result_plan->targetlist)) {
 				result_plan = (Plan *) make_result(root, full_tlist, NULL, result_plan);
 			} else {
-					result_plan->targetlist = full_tlist;
+				//result_plan->targetlist = full_tlist;
 			}
 			add_tlist_costs_to_plan(root, result_plan, full_tlist);
 		} else {
