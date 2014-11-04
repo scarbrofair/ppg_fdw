@@ -79,7 +79,7 @@ static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
 static bool limit_needed(Query *parse);
 
 static List *make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx, bool *need_tlist_eval,
-									int *havingTleOffset, List**havingTle);
+									List** havingTlePosition, List**havingTle);
 
 static void locate_grouping_columns(PlannerInfo *root, List *tlist, List *sub_tlist, AttrNumber *groupColIdx);
 
@@ -290,13 +290,14 @@ preprocess_groupclause(PlannerInfo *root)
 
 static List *
 make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx,
-                        bool *need_tlist_eval, int *havingTleOffset, List**havingTle)
+                        bool *need_tlist_eval, List** havingTlePosition, List**havingTle)
 {
         Query      *parse = root->parse;
         List       *full_tlist;
         List       *non_group_cols;
         int                     numCols;
-
+        int     next_resno ;
+        ListCell   *tl;
         *groupColIdx = NULL;
 
         if (!parse->hasAggs && !parse->groupClause && !root->hasHavingQual &&
@@ -309,13 +310,12 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
         full_tlist = NIL;
         non_group_cols = NIL;
         *need_tlist_eval = false;       /* only eval if not flat tlist */
-		*havingTle = NIL;
-
+	*havingTle = NIL;
+	*havingTlePosition = NIL;
         numCols = list_length(parse->groupClause);
         if (numCols > 0)
         {
                 AttrNumber *grpColIdx;
-                ListCell   *tl;
 
                 grpColIdx = (AttrNumber *) palloc0(sizeof(AttrNumber) * numCols);
                 *groupColIdx = grpColIdx;
@@ -357,14 +357,41 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
         non_group_cols = NULL;
 
         if (parse->havingQual) {
-			*havingTleOffset = length(non_group_cols) + length(full_tlist);
-			*havingTle = pull_var_clause((Node *) (parse->havingQual),
+		*havingTle = pull_var_clause((Node *) (parse->havingQual),
                                                                          PVC_INCLUDE_AGGREGATES,
                                                                          PVC_INCLUDE_PLACEHOLDERS);
-			non_group_cols = list_copy(*havingTle);
-		}
-        full_tlist = add_to_flat_tlist(full_tlist, non_group_cols);
+		non_group_cols = list_copy(*havingTle);
+	}
+                full_tlist = list_concat(full_tlist, non_group_cols);
+        non_group_cols = NULL;
 
+        if (parse->havingQual) {
+                        *havingTle = pull_var_clause((Node *) (parse->havingQual),
+                                                                         PVC_INCLUDE_AGGREGATES,
+                                                                         PVC_INCLUDE_PLACEHOLDERS);
+                        non_group_cols = list_copy(*havingTle);
+        }
+
+        next_resno = list_length(full_tlist) + 1;
+
+        foreach(tl, non_group_cols)
+        {
+                Node       *expr = (Node *) lfirst(tl);
+                TargetEntry *noGroupTl = tlist_member(expr, full_tlist);
+                if (noGroupTl == NULL)
+                {
+                        TargetEntry *tle;
+
+                        *havingTlePosition = lappend_int(*havingTlePosition, next_resno);
+                        tle = makeTargetEntry(copyObject(expr),         /* copy needed?? */
+                                                                  next_resno++,
+                                                                  NULL,
+                                                                  false);
+                        full_tlist = lappend(full_tlist, tle);
+                } else {
+                        *havingTlePosition = lappend_int(*havingTlePosition, noGroupTl->resno);
+                }
+        }
         /* clean up cruft */
         list_free(non_group_cols);
 
