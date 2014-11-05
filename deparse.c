@@ -1334,7 +1334,7 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, deparse_expr_cxt *cont
  
 	if (rte->eref != NULL && rte->rtekind == RTE_SUBQUERY) {
 		appendStringInfoString(buf, rte->alias->aliasname);
-		
+		appendStringInfoString(buf, ".");
 	} else if(rte->rtekind == RTE_RELATION) {
 		if (rte->alias != NULL) {
 			appendStringInfo(buf, " %s", rte->alias->aliasname); 
@@ -1342,8 +1342,9 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, deparse_expr_cxt *cont
                         relname = get_rel_name(rte->relid);
                         appendStringInfoString(buf, quote_identifier(relname));
                 }
+                appendStringInfoString(buf, ".");
 	}
-	appendStringInfoString(buf, ".");
+	
 	appendStringInfoString(buf, quote_identifier(colname));
 }
 
