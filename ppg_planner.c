@@ -61,7 +61,12 @@ typedef struct
 	AttrNumber outerResno;
 } TargetListContext;
 
-
+typedef struct
+{
+        Query *parse;
+        Node  *currentExpr;
+        bool  changed;
+} RewriteOrignalTargetContext;
 
 
 FdwRoutine *FDW_handler = NULL;
@@ -87,14 +92,22 @@ static Plan *ppg_grouping_planner(PlannerInfo *root, double tuple_fraction);
 
 static void createNewTargetEntryList(TargetListContext *targetListContext, List *targetList);
 
-static void postProcessSortList(Query *parse, List *newTargetList);
-
 static TargetEntry *createNewTargetEntry(List *funcname, List *fargs, bool agg_star, bool agg_distinct, bool func_variadic,
 	       	bool resjunk, bool is_column, int location, char*colname, AttrNumber resno);
+
+static void updateSortGroupClause (Query *parse, List *newTlist);
+
+static void postProcessSortList(List *sortList, List *newTlist);
 
 static int32 getTlistWidth(List *outerTleList);
 
 static bool opHasAgg (Node *node);
+
+static List *handleSubquery (PlannerInfo *root);
+
+static void rewriteOrignalTargetList (PlannerInfo *root);
+
+static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context);
 
 static ForeignScan *deparsePlan(PlannerInfo *root);
 
@@ -334,7 +347,7 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
                                                                                  list_length(full_tlist) + 1,
                                                                                  tle->resname,
                                                                                  false);
-								newtle->ressortgroupref = tle->ressortgroupref;
+				newtle->ressortgroupref = tle->ressortgroupref;
                                 full_tlist = lappend(full_tlist, newtle);
 
                                 Assert(grpColIdx[colno] == 0);  /* no dups expected */
@@ -362,15 +375,6 @@ make_fullplanTargetList(PlannerInfo *root, List *tlist, AttrNumber **groupColIdx
                                                                          PVC_INCLUDE_PLACEHOLDERS);
 		non_group_cols = list_copy(*havingTle);
 	}
-                full_tlist = list_concat(full_tlist, non_group_cols);
-        non_group_cols = NULL;
-
-        if (parse->havingQual) {
-                        *havingTle = pull_var_clause((Node *) (parse->havingQual),
-                                                                         PVC_INCLUDE_AGGREGATES,
-                                                                         PVC_INCLUDE_PLACEHOLDERS);
-                        non_group_cols = list_copy(*havingTle);
-        }
 
         next_resno = list_length(full_tlist) + 1;
 
@@ -946,89 +950,222 @@ static int32 getTlistWidth(List *outerTleList)
 	return item_width;
 }
 
-static ForeignScan *deparsePlan(PlannerInfo *root)
+static List *handleSubquery (PlannerInfo *root)
 {
-	//char* s = NULL;
-	ForeignScan * plan = NULL;
-	List	   *fdw_private;
-	List		*subplanList = NULL;
-	ListCell	*lc;
-	Query *parse = root->parse;
-	StringInfoData sql;
-	SubPlanPath  planPath;
-	planPath.root = root;
-	planPath.source = NULL;
-	planPath.planID = 0;
-	planPath.subPlanList = NULL;
-	planPath.outRows = 0;
-	planPath.rowSize = 0;
-	getSubPlanPath(parse, &planPath);
-	foreach (lc, planPath.subPlanList)
-	{
-		SubPlanPath  *subPath = lfirst(lc);
-		SubQueryPlan* subplan = (SubQueryPlan*)palloc(sizeof(SubQueryPlan));
-		createSubplan(subplan, subPath->source);
-		subplan->subplanIndex = subPath->planID;
-		subplan->dmethod = All;
-		subplanList = lappend(subplanList,subplan);
-	}
+        List            *subplanList = NULL;
+        ListCell        *lc; 
+        Query *parse = root->parse;
+        SubPlanPath  planPath;
+        planPath.root = root;
+        planPath.source = NULL;
+        planPath.planID = 0; 
+        planPath.subPlanList = NULL;
+        planPath.outRows = 0; 
+        planPath.rowSize = 0; 
+        getSubPlanPath(parse, &planPath);
+        foreach (lc, planPath.subPlanList)
+        {    
+                SubPlanPath  *subPath = lfirst(lc);
+                SubQueryPlan* subplan = (SubQueryPlan*)palloc(sizeof(SubQueryPlan));
+                createSubplan(subplan, subPath->source);
+                subplan->subplanIndex = subPath->planID;
+                subplan->dmethod = All; 
+                subplanList = lappend(subplanList,subplan);
+        }    
 
-	if (length(parse->jointree->fromlist) == 1 && length(subplanList) == 1) {
-		Node *fromNode = lfirst(list_head(parse->jointree->fromlist));
-		if (IsA(fromNode, RangeTblRef)) {
-			int varno = ((RangeTblRef *) fromNode)->rtindex;
-			RangeTblEntry *fromRte = rt_fetch(varno, parse->rtable);
-			Node *srcNode = ((SubPlanPath  *)lfirst(list_head(planPath.subPlanList)))->source;
-            if (equal(fromRte, srcNode)) {         
-            	ListCell        *lc1;          
-	            forboth (lc, subplanList, lc1, planPath.subPlanList)
-				{                                      
-        	    	SubPlanPath  *subPath = lfirst(lc1);
-            	    if (subPath->type == InFrom) {
-						SubQueryPlan* subplan = lfirst(lc);
-						subplan->dmethod = RoundRobin;
-					}
-				}                      
-       		}
-		}             
-	}
-
-	initStringInfo(&sql);
-
-	deparseSelectSql(&sql, root, NULL, NULL);
-	fdw_private = list_make3(makeString(sql.data), parse->targetList, subplanList);
-	plan = make_foreignscan(NULL, NULL, 0, NULL, fdw_private);
-	return plan;
+        if (length(parse->jointree->fromlist) == 1 && length(subplanList) == 1) { 
+                Node *fromNode = lfirst(list_head(parse->jointree->fromlist));
+                if (IsA(fromNode, RangeTblRef)) {
+                        int varno = ((RangeTblRef *) fromNode)->rtindex;
+                        RangeTblEntry *fromRte = rt_fetch(varno, parse->rtable);
+                        Node *srcNode = ((SubPlanPath  *)lfirst(list_head(planPath.subPlanList)))->source;
+            if (equal(fromRte, srcNode)) {     
+                ListCell        *lc1;     
+                    forboth (lc, subplanList, lc1, planPath.subPlanList)
+                                {     
+                        SubPlanPath  *subPath = lfirst(lc1);
+                    if (subPath->type == InFrom) {
+                                                SubQueryPlan* subplan = lfirst(lc);
+                                                subplan->dmethod = RoundRobin;
+                                        }    
+                                }     
+                }    
+                }     
+        }    
+        return subplanList;
 }
 
-static void postProcessSortList(Query *parse, List *tlist)
+// It will be called when subquery exsits 
+static void rewriteOrignalTargetList (PlannerInfo *root) 
 {
-	ListCell   *l;
-	Oid	sortop;
-	Oid     eqop;
-	bool    hashable;
+        Query *parse = root->parse;
+        ListCell        *lc; 
+        RewriteOrignalTargetContext context;
+        context.parse = parse;
+        context.currentExpr = NULL;
+        foreach(lc, parse->targetList) {
+                TargetEntry *curTe = lfirst(lc);
+                context.currentExpr = curTe->expr;
+                context.changed = false;
+                rewriteOrignalTargetListWalker(&context);
+        }
+}
 
-	if (parse->sortClause == NIL) {
-		return;
-	}
+static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context)
+{
+        Node *currentExpr = context->currentExpr;
+        if (IsA(currentExpr, Aggref)){
+                ListCell *lc;
+                bool argChanged = false;
+                Aggref *aggOld = (Aggref*)(currentExpr);
+                if (aggOld->aggstar) {
+                        context->changed = false;
+                        return;
+                }
+                foreach(lc, aggOld->args)
+                {
+                        TargetEntry *aggArgTle = (TargetEntry *)lfirst(lc);
+                        context->currentExpr = aggArgTle->expr;
+                        context->changed = false;
+                        rewriteOrignalTargetListWalker(context);
+                        argChanged |= context->changed;
+                }
+                if (argChanged) {
+                        char * aggname = getFuncName(aggOld->aggfnoid);
+                        if(!(strcmp(aggname,"avg" ) == 0 || strcmp(aggname, "count") == 0 || strcmp(aggname, "sum") == 0)
+                                || (strcmp(aggname, "max") == 0 || strcmp(aggname, "min") == 0)) {
+                                ereport(ERROR, (errmsg("unkown name ")));
+                        }
+                        List* aggNameList =list_make1(makeString(aggname));
+                        TargetEntry *newTarget = createNewTargetEntry(aggNameList, aggOld->args, false, false, false, true, false, -1,
+                                                                NULL, 1);
+                        aggOld->aggfnoid = ((Aggref*)(newTarget->expr))->aggfnoid;
+                        aggOld->aggtype = ((Aggref*)(newTarget->expr))->aggtype;
+                        aggOld->aggcollid = ((Aggref*)(newTarget->expr))->aggcollid;
+                        // save the changed
+                        context->currentExpr = argChanged;
+                }
+                // restore the orignal expr
+                context->currentExpr = currentExpr;
+        } else if (IsA(currentExpr, Var)){
+                Var     *varExpr = (Var*)(currentExpr);
+                int varno = varExpr->varno;
+                RangeTblEntry *rte = rt_fetch(varno, context->parse->rtable);
+                if (rte->rtekind == RTE_SUBQUERY) {
+                        Query* subquery = rte->subquery;
+                        TargetEntry *referencedTe = list_nth(subquery->targetList, varExpr->varattno-1);
+                        varExpr->vartype = exprType(((Node*)(referencedTe->expr)));
+                        varExpr->vartypmod = exprTypmod(((Node*)(referencedTe->expr)));
+                        context->changed = true;
+                }
+        } else if( IsA(currentExpr, Const)){
+                context->changed = false;
+                return;
+      } else if (IsA(currentExpr, FuncExpr)) {
+                context->changed = false;
+                return;
+        } else if (IsA(currentExpr, OpExpr)) {
+                OpExpr  *opExpr =  (OpExpr*)(currentExpr);
+                ListCell *lc;
+                bool argChanged = false;
+                foreach(lc, opExpr->args)
+                {
+                        TargetEntry *opArgTle = (TargetEntry *)lfirst(lc);
+                        context->currentExpr = opArgTle->expr;
+                        context->changed = false;
+                        rewriteOrignalTargetListWalker(context);
+                        argChanged |= context->changed;
+                }
+                if (argChanged) {
+                        TargetEntry *tmpLeftTle = NULL;
+                        TargetEntry *tmpRightTle = NULL;
+                        char * opName = get_opname(opExpr->opno);
+                        if (opName == NULL) {
+                                ereport(ERROR, (errmsg("Failed to get the operator name")));
+                        }
+                        List* opNameStr = list_make1(makeString(opName));
+                        if (length(opExpr->args)==1) {
+                                ListCell *tmpLeftCell = list_head(opExpr->args);
+                                tmpLeftTle = (TargetEntry *)lfirst(tmpLeftCell);
+                        } else if (length(opExpr->args)==2) {
+                                ListCell *tmpLeftCell = list_head(opExpr->args);
+                                tmpLeftTle = (TargetEntry *)lfirst(tmpLeftCell);
+                                ListCell *tmpRightCell = lnext(tmpLeftCell);
+                                tmpRightTle = (TargetEntry *)lfirst(tmpRightCell);
+                        } else {
+                                ereport(ERROR, (errmsg("the number of args should be 1 or 2")));
+                        }
+                        Operator tup = oper(NULL,opNameStr,exprType((Node*)(tmpLeftTle->expr)),
+                                                tmpRightTle ? exprType((Node*)(tmpRightTle->expr)) : InvalidOid,
+                                                false, 1);
+                        Form_pg_operator opform  = (Form_pg_operator) GETSTRUCT(tup);
+                        opExpr->opno = oprid(tup);
+                        opExpr->opfuncid = opform->oprcode;
+                        opExpr->opresulttype = opform->oprresult;//rettype;
+                        opExpr->opretset = get_func_retset(opform->oprcode);
+                        ReleaseSysCache(tup);
+                        // save the changed
+                        context->currentExpr = argChanged;
+                }
+                // restore the orignal expr
+                context->currentExpr = currentExpr;
 
-	foreach(l, parse->sortClause)
-	{
-		SortGroupClause *sortcl = (SortGroupClause *) lfirst(l);
-		Expr *sortkey = (Expr *) get_sortgroupclause_expr(sortcl, tlist);
-		Assert(OidIsValid(sortcl->sortop));
-		if (sortcl->nulls_first) {
-			// for order asc 
-			get_sort_group_operators(exprType(sortkey), false, true, true, 
-						NULL, &eqop, &sortop, &hashable);
-		} else {
-			get_sort_group_operators(exprType(sortkey), true, true, false, 
-						&sortop, &eqop, NULL, &hashable);
-		}
-		sortcl->eqop = eqop;
-		sortcl->sortop = sortop;
-		sortcl->hashable = hashable;
-	}
+        } else if (IsA(currentExpr, CaseExpr)) {
+        } else {
+                ereport(ERROR, (errmsg("does not support this node type ")));
+        }
+        return;
+}
+
+static ForeignScan *deparsePlan(PlannerInfo *root, List* subplanList)
+{
+        List       *fdw_private;
+        StringInfoData sql;
+        initStringInfo(&sql);
+        deparseSelectSql(&sql, root, NULL, NULL);
+        fdw_private = list_make3(makeString(sql.data), root->parse->targetList, subplanList);
+        return make_foreignscan(NULL, NULL, 0, NULL, fdw_private);
+}
+
+static void postProcessSortList(List *sortList, List *newTlist)
+{
+        ListCell   *l;
+        Oid     sortop;
+        Oid     eqop;
+        bool    hashable;
+        foreach(l, sortList)
+        {
+                SortGroupClause *sortcl = (SortGroupClause *) lfirst(l);
+                Expr *sortkey = (Expr *) get_sortgroupclause_expr(sortcl, newTlist);
+                Assert(OidIsValid(sortcl->sortop));
+                if (sortcl->nulls_first) {
+                        // for order asc 
+                        get_sort_group_operators(exprType(sortkey), false, true, true,
+                                                NULL, &eqop, &sortop, &hashable);
+                } else {
+                        get_sort_group_operators(exprType(sortkey), true, true, false,
+                                                &sortop, &eqop, NULL, &hashable);
+                }
+                sortcl->eqop = eqop;
+                sortcl->sortop = sortop;
+                sortcl->hashable = hashable;
+        }
+        return ;
+}
+
+// since we modify the targetlist, we need to modify the SortGroupClause
+static void updateSortGroupClause (Query *parse, List *newTlist)
+{
+        if (parse->groupClause != NIL) {
+                postProcessSortList(parse->groupClause, newTlist);
+        }
+        if (parse->sortClause != NIL) {
+                postProcessSortList(parse->sortClause, newTlist);
+        }
+        if (parse->distinctClause != NIL) {
+                postProcessSortList(parse->distinctClause, newTlist);
+        }
+        return;
 }
 
 static Plan *
@@ -1069,8 +1206,9 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		List	   *full_tlist = NIL;
 		List	   *final_tlist = NIL;
 		List	   *havingTleList = NIL;
-		int 		orignalTlistLength = 0;
 		List       *havingTlePosition = NIL;
+		List       *subplanList = NIL;
+		int 		orignalTlistLength = 0;
 		double		sub_limit_tuples = 0.0;
 		AttrNumber *groupColIdx = NULL;
 		bool		need_tlist_eval = true;
@@ -1080,11 +1218,15 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		double		path_rows;
 		int			path_width;
 		bool		use_hashed_grouping = false;
+		// handle subquery first 
+                subplanList = handleSubquery(root);
+                if (subplanList) {
+                        rewriteOrignalTargetList(root); 
+                }    
 		orignalTlistLength = length(tlist);
 		MemSet(&agg_costs, 0, sizeof(AggClauseCosts));
 		/* A recursive query should always have setOperations */
 		Assert(!root->hasRecursion);
-
 		/* Preprocess GROUP BY clause, needed */
 		if (parse->groupClause)
 			preprocess_groupclause(root);
@@ -1105,10 +1247,8 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		targetListContext->outerResno = 1;
 		createNewTargetEntryList(targetListContext, full_tlist);
 		parse->targetList = targetListContext->deparseList;
-		result_plan = (Plan*)deparsePlan(root);
-		/*
-		s = nodeToString(result_plan);
-		elog(INFO, "\n desparse plan %s\n", pretty_format_node_dump(s));*/
+		result_plan = (Plan*)deparsePlan(root, subplanList);
+
 		/* Get the final target list from the revised target list */
 		if(orignalTlistLength > 0) {
 			ListCell *lc;
@@ -1126,14 +1266,13 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		
 		/* create the pathkeys for group, sort and distinct opeations */
 		tlist = final_tlist;
+		updateSortGroupClause(parse, targetListContext->outerList);
 		root->group_pathkeys = NIL;
 		if (parse->groupClause && grouping_is_sortable(parse->groupClause)) {
         		root->group_pathkeys =	make_pathkeys_for_sortclauses(root, parse->groupClause, tlist);
 		} 	
     		/* We do not consider  window functions now */
         	root->window_pathkeys = NIL;   					
-        	root->distinct_pathkeys = NIL; 
-
     		if (parse->distinctClause && grouping_is_sortable(parse->distinctClause)) {
         		root->distinct_pathkeys = make_pathkeys_for_sortclauses(root, parse->distinctClause, tlist);                        
 		}
@@ -1142,10 +1281,8 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		result_plan->plan_rows = 100; 
  		result_plan->targetlist = targetListContext->intelList;
 		result_plan->plan_width = getTlistWidth(targetListContext->intelList);
-		//result_plan = FDW_handler->GetForeignPlan(root,NULL,0,NULL,NULL,NULL);
 		tlist = targetListContext->outerList;
 		
-		postProcessSortList(parse, targetListContext->outerList);
 		if (root->group_pathkeys) {
 			current_pathkeys = root->group_pathkeys;
 		} else if (list_length(root->distinct_pathkeys) >  list_length(root->sort_pathkeys)) {
