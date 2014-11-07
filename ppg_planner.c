@@ -111,6 +111,8 @@ static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context
 
 static ForeignScan *deparsePlan(PlannerInfo *root, List* subplanList);
 
+static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettype, Oid *funcid,
+					bool *retset, int *nvargs, Oid **declared_arg_types, bool func_variadic, List **argdefaults);
 
 // borrowed from PG src 
 static bool limit_needed(Query *parse)
@@ -451,7 +453,7 @@ preprocess_rowmarks(PlannerInfo *root)
 }
 
 static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettype, Oid *funcid,
-					bool *retset, int *nvargs, Oid **declared_arg_types,
+					bool *retset, int *nvargs, Oid **declared_arg_types, bool func_variadic,
 					List	   **argdefaults)
 {
 	ListCell	*l;
@@ -461,12 +463,6 @@ static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettyp
 	List		*argnames;
 	FuncDetailCode 	fdresult;
 
-	/*
-	 * Most of the rest of the parser just assumes that functions do not have
-	 * more than FUNC_MAX_ARGS parameters.	We have to test here to protect
-	 * against array overruns, etc.  Of course, this may not be a function,
-	 * but the test doesn't hurt.
-	 */
 	if (list_length(fargs) > FUNC_MAX_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_TOO_MANY_ARGUMENTS),
@@ -475,15 +471,6 @@ static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettyp
 						   FUNC_MAX_ARGS,
 						   FUNC_MAX_ARGS)));
 
-	/*
-	 * Extract arg type info in preparation for function lookup.
-	 *
-	 * If any arguments are Param markers of type VOID, we discard them from
-	 * the parameter list.	This is a hack to allow the JDBC driver to not
-	 * have to distinguish "input" and "output" parameter symbols while
-	 * parsing function-call constructs.  We can't use foreach() because we
-	 * may modify the list ...
-	 */
 	nargs = 0;
 	for (l = list_head(fargs); l != NULL; l = nextl)
 	{
@@ -492,7 +479,7 @@ static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettyp
 
 		nextl = lnext(l);
 
-		if (argtype == VOIDOID && IsA(arg, Param) &&!is_column)
+		if (argtype == VOIDOID && IsA(arg, Param) )
 		{
 			fargs = list_delete_ptr(fargs, arg);
 			continue;
@@ -501,14 +488,6 @@ static FuncDetailCode getFuncDetailCode(List *funcname, List *fargs, Oid *rettyp
 		actual_arg_types[nargs++] = argtype;
 	}
 
-	/*
-	 * Check for named arguments; if there are any, build a list of names.
-	 *
-	 * We allow mixed notation (some named and some not), but only with all
-	 * the named parameters after all the unnamed ones.  So the name list
-	 * corresponds to the last N actual parameters and we don't need any extra
-	 * bookkeeping to match things up.
-	 */
 	argnames = NIL;
 	foreach(l, fargs)
 	{
@@ -552,16 +531,12 @@ static TargetEntry *createNewAggTargetEntry(List *funcname, List *fargs, bool ag
 {
 	Oid			rettype;
 	Oid			funcid;
-	ListCell   *l;
-	ListCell   *nextl;
-	int			nargs;
 	Oid		   *declared_arg_types;
-	List	   *argnames;
 	List	   *argdefaults;
 	bool		retset;
 	int			nvargs;
 	FuncDetailCode fdresult = getFuncDetailCode(funcname, fargs, &rettype, &funcid,
-					&retset, &nvargs, &declared_arg_types, &argdefaults)
+					&retset, &nvargs, &declared_arg_types, func_variadic, &argdefaults);
 	Assert(fdresult == FUNCDETAIL_AGGREGATE);
 	Aggref	*aggref = (Aggref*)makeNode(Aggref);
 
@@ -569,7 +544,7 @@ static TargetEntry *createNewAggTargetEntry(List *funcname, List *fargs, bool ag
 	aggref->aggtype = rettype;
 	aggref->aggstar = agg_star;
 	aggref->location = location;
-	//aggref->args = fargs; //Later to provide the args
+	aggref->args = fargs; 
 	return makeTargetEntry((Expr *)aggref, resno, colname, resjunk);
 }
 /*
@@ -612,7 +587,7 @@ static void createNewTargetEntryList(TargetListContext *targetListContext, List 
                                                                          /             \
                                                                      (sum)            (count)  the nodes on this level will be sent to remote db
 				*/
-				List* sumArg = NULL;
+				List* sumArg = NIL;
 				ListCell *lc;
 				foreach(lc, aggOld->args)
 				{
@@ -1096,9 +1071,28 @@ static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context
 			argChanged |= context->changed;
 		}
 		if (argChanged) { 
-			char * funName = getFuncName(funExpr->fncid);
-			
+			Oid			rettype;
+			Oid			funcid;
+			Oid		   *declared_arg_types;
+			List	   *argdefaults;
+			bool		retset;
+			int			nvargs;
+			char * funName = getFuncName(funExpr->funcid);
+			List* funNameStr = list_make1(makeString(funName));
+			FuncDetailCode fdresult = getFuncDetailCode(funNameStr, funExpr->args, &rettype, &funcid,
+					&retset, &nvargs, &declared_arg_types, true, &argdefaults);
+			if (rettype!= funExpr->funcresulttype || funcid !=funExpr->funcid) {
+				funExpr->funcresulttype = rettype;
+				funExpr->funcid = funcid;
+				context->changed = true;
+			} else {
+				context->changed = false;
+			}
+		} else {
+			context->changed = false;
 		}
+		// restore the orignal expr
+		context->currentExpr = currentExpr; 
 	} else if (IsA(currentExpr, OpExpr)) {
 		OpExpr	*opExpr =  (OpExpr*)(currentExpr);
 		ListCell *lc;
@@ -1133,7 +1127,7 @@ static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context
 						tmpRightTle ? exprType((Node*)(tmpRightTle->expr)) : InvalidOid,
 						false, 1);
 			Form_pg_operator opform  = (Form_pg_operator) GETSTRUCT(tup);
-			if (opExpr->opno != oprid(tup) || opExpr->opfuncid != opform->oprcode
+			if (opExpr->opno != oprid(tup) || opExpr->opfuncid != opform->oprcode ||
 				opExpr->opresulttype != opform->oprresult ||
 				opExpr->opretset != get_func_retset(opform->oprcode)) {
 
@@ -1199,7 +1193,7 @@ static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context
 		CaseWhen *caseWhen = (CaseWhen*) currentExpr;
 		bool resultTypeChanged = false;
 		if (caseWhen->expr) {
-			context->currentExpr = caseExpr->expr;
+			context->currentExpr = caseWhen->expr;
 			context->changed = false;
 			rewriteOrignalTargetListWalker(context);
 		}
