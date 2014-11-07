@@ -1336,15 +1336,10 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, deparse_expr_cxt *cont
 		appendStringInfoString(buf, rte->alias->aliasname);
 		appendStringInfoString(buf, ".");
 	} else if(rte->rtekind == RTE_RELATION) {
-		if (rte->alias != NULL) {
-			appendStringInfo(buf, " %s", rte->alias->aliasname); 
-                } else {
-                        relname = get_rel_name(rte->relid);
-                        appendStringInfoString(buf, quote_identifier(relname));
-                }
-                appendStringInfoString(buf, ".");
+		relname = get_rel_name(rte->relid);
+		appendStringInfoString(buf, quote_identifier(relname));
+		appendStringInfoString(buf, ".");
 	}
-	
 	appendStringInfoString(buf, quote_identifier(colname));
 }
 
@@ -1724,7 +1719,8 @@ deparseRangeTblRef(RangeTblRef * node, deparse_expr_cxt *context)
 		elog(ERROR, "unexpected range table when deparse");
 	}
 	if (rte->alias != NULL) {	
-		appendStringInfo(buf, " %s ", rte->alias->aliasname);
+		appendStringInfoString(buf, "public.");
+		appendStringInfo(buf, "%s ", rte->alias->aliasname);
 	}
 }
 
