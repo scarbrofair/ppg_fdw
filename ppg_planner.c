@@ -1070,8 +1070,8 @@ static void rewriteOrignalTargetListWalker (RewriteOrignalTargetContext *context
                 bool argChanged = false;
                 foreach(lc, opExpr->args)
                 {
-                        TargetEntry *opArgTle = (TargetEntry *)lfirst(lc);
-                        context->currentExpr = opArgTle->expr;
+                        Node *opArg = (Node *)lfirst(lc);
+                        context->currentExpr = opArg;
                         context->changed = false;
                         rewriteOrignalTargetListWalker(context);
                         argChanged |= context->changed;
