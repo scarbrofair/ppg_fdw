@@ -1337,9 +1337,9 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, deparse_expr_cxt *cont
 		appendStringInfoString(buf, ".");
 	} else if(rte->rtekind == RTE_RELATION) {
 		if (rte->alias == NULL) {
-		relname = get_rel_name(rte->relid);
-		appendStringInfoString(buf, quote_identifier(relname));
-		appendStringInfoString(buf, ".");
+			relname = get_rel_name(rte->relid);
+			appendStringInfoString(buf, quote_identifier(relname));
+			appendStringInfoString(buf, ".");
 		} else if (rte->alias->aliasname != NULL) {
 			appendStringInfoString(buf, rte->alias->aliasname);
 			appendStringInfoString(buf, ".");

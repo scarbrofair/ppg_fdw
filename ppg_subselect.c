@@ -65,50 +65,62 @@ static void handleJt(Query*parse, Node* jtnode, SubPlanPath *planPath)
 		RangeTblEntry *rte = rt_fetch(varno, parse->rtable);
 		if (rte->rtekind == RTE_SUBQUERY) {
 			Query* subquery = rte->subquery; 
-			// reserve the orignal target list, because target list can be changed in ppg_subquery_planner
-			List *orignalTlist = copyObject(subquery->targetList);
-			PlannerInfo *subroot;
-			StringInfoData buf;
-			initStringInfo(&buf);
-			// Give it a unique name 
-			appendStringInfo(&buf, "tmp_table_%s_%ld", rte->alias->aliasname, random());
-			rte->alias->aliasname = (char*) palloc((strlen(buf.data)+1)*sizeof(char));
-			memcpy(rte->alias->aliasname, buf.data, strlen(buf.data));
-			rte->alias->aliasname[strlen(buf.data)] = 0;
+                        // reserve the orignal target list( actually we just need the names), because target list can be changed in ppg_subquery_planner
+                        List *newTlist = NIL;          
+                        int colAliasNameIndex = 0;     
+                        PlannerInfo *subroot;          
+                        StringInfoData buf;            
+                        ListCell *lc;                  
+                        initStringInfo(&buf);          
+                        // Give it a unique name       
+                        appendStringInfo(&buf, "tmp_table_%s_%ld", rte->alias->aliasname, random());
+                        rte->alias->aliasname = (char*) palloc((strlen(buf.data)+1)*sizeof(char));
+                        memcpy(rte->alias->aliasname, buf.data, strlen(buf.data));
+                        rte->alias->aliasname[strlen(buf.data)] = 0;
 
-			Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subquery, planPath->root, false, 0.0, &subroot);
-			sub_plan = set_plan_references(subroot, sub_plan);
-			planPath->root->glob->subplans = lappend(planPath->root->glob->subplans, sub_plan);
-			planPath->root->glob->subroots = lappend(planPath->root->glob->subroots, subroot);
-			subquery->targetList = orignalTlist;
-			SubPlanPath *subplanPath = (SubPlanPath *) palloc(sizeof(SubPlanPath));
-			subplanPath->source = (Node*)rte;
-			subplanPath->type = InFrom ;
-			subplanPath->planID = list_length(planPath->root->glob->subplans);
-			subplanPath->subPlanList = NULL;
-			planPath->subPlanList = lappend(planPath->subPlanList, subplanPath);
-			
-			// Revise the subquery for this RangeTblEntry
-			Query	   *qry = makeNode(Query);		
-			qry->commandType = CMD_SELECT;
-			RangeTblRef *rtr = makeNode(RangeTblRef);
-			qry->rtable = list_make1(rte);
-			rtr->rtindex = 1;	
-			qry->jointree = makeFromExpr(list_make1(rtr), NULL);
-			TargetEntry *oldTe = lfirst(list_head(subquery->targetList));
-			Var *var = makeVar(1, 1, exprType(((Node*)(oldTe->expr))), exprTypmod(((Node*)(oldTe->expr))), -1,  0);
-			RangeTblEntry *newTe = makeTargetEntry((Expr*)var, 1, oldTe->resname, false);
-			qry->targetList = list_make1(newTe);
-			qry->havingQual = NULL;
-			qry->sortClause = NIL;
-			qry->groupClause = NIL;
-			qry->distinctClause = NIL;
-			qry->hasDistinctOn = false;
-			qry->limitOffset = NULL;
-			qry->hasSubLinks = false;
-			qry->hasWindowFuncs = false;
-			qry->hasAggs = false;
-			rte->subquery = (Node*)qry;
+                        Plan* sub_plan = ppg_subquery_planner(planPath->root->glob, subquery, planPath->root, false, 0.0, &subroot);
+                        sub_plan = set_plan_references(subroot, sub_plan);
+                        planPath->root->glob->subplans = lappend(planPath->root->glob->subplans, sub_plan);
+                        planPath->root->glob->subroots = lappend(planPath->root->glob->subroots, subroot);
+                        SubPlanPath *subplanPath = (SubPlanPath *) palloc(sizeof(SubPlanPath));
+                        subplanPath->source = (Node*)rte;
+                        subplanPath->type = InFrom ;   
+                        subplanPath->planID = list_length(planPath->root->glob->subplans);
+                        subplanPath->subPlanList = NULL;
+                        planPath->subPlanList = lappend(planPath->subPlanList, subplanPath);
+                        
+                        // Revise the subquery for this RangeTblEntry
+                        Query      *qry = makeNode(Query);               
+                        qry->commandType = CMD_SELECT; 
+                        RangeTblRef *rtr = makeNode(RangeTblRef);
+                        RangeTblEntry *newRte = copyObject(getPPGRTEfromQuery(subquery, NULL));
+                        newRte->alias = copyObject(rte->alias);
+                        newRte->eref = copyObject(rte->eref);
+                        qry->rtable = list_make1(newRte);
+                        rtr->rtindex = 1;              
+                        qry->jointree = makeFromExpr(list_make1(rtr), NULL);
+                        foreach (lc, sub_plan->targetlist) {
+                                TargetEntry *oldTe = lfirst(lc);
+                                char * resname = oldTe->resname;
+                                if (length(rte->alias->colnames) > 0) {
+                                        resname = strVal(list_nth(rte->alias->colnames, colAliasNameIndex));
+                                        colAliasNameIndex++;           
+                                }                              
+                                Var *var = makeVar(1, 1, exprType(((Node*)(oldTe->expr))), exprTypmod(((Node*)(oldTe->expr))), -1,  0);
+                                TargetEntry *newTe = makeTargetEntry((Expr*)var, 1, resname, false);
+                                newTlist = lappend(newTlist, newTe);
+                        }
+                        qry->targetList = newTlist;    
+                        qry->havingQual = NULL;        
+                        qry->sortClause = NIL;         
+                        qry->groupClause = NIL;        
+                        qry->distinctClause = NIL;     
+                        qry->hasDistinctOn = false;    
+                        qry->limitOffset = NULL;
+                        qry->hasSubLinks = false;
+                        qry->hasWindowFuncs = false;
+                        qry->hasAggs = false;
+                        rte->subquery = (Node*)qry;
 		} 	
 	} else if (IsA(jtnode, FromExpr)) {
 		FromExpr   *f = (FromExpr *) jtnode;
