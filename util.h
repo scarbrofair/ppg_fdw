@@ -77,5 +77,5 @@ extern bool handleAggExprInHaving (Node *node, havingAggContext* context);
 
 extern bool canAllPush(Query *parse, FdwRoutine *fdw_handler);
 
-extern RangeTblEntry *getPPGRTEfromQuery(Query *parse, FdwRoutine *fdw_handler);
+extern RangeTblEntry *getPPGRTEfromQuery(Query *parse);
 #endif
