@@ -399,6 +399,35 @@ static void bindInsertStmt(ForeignScanState *node, const char *insertSQL);
 static void insertSlot2TmpTable(ForeignScanState *node, FmgrInfo *p_flinfo, bool *varlenaArray, TupleTableSlot *slot, DistributeMethod dmethod);
 
 static void freeInsertStmt(ForeignScanState *node);
+
+FdwRoutine ppg_fdw_routine = {
+        .type = T_FdwRoutine, 
+        /* Functions for scanning foreign tables */
+        .GetForeignRelSize = postgresGetForeignRelSize,
+        .GetForeignPaths = postgresGetForeignPaths,
+        .GetForeignPlan = postgresGetForeignPlan,
+        .BeginForeignScan = postgresBeginForeignScan,
+        .IterateForeignScan = postgresIterateForeignScan,
+        .ReScanForeignScan = postgresReScanForeignScan,
+        .EndForeignScan = postgresEndForeignScan,
+
+        /* Functions for updating foreign tables */
+        .AddForeignUpdateTargets = postgresAddForeignUpdateTargets,
+        .PlanForeignModify = postgresPlanForeignModify,
+        .BeginForeignModify = postgresBeginForeignModify,
+        .ExecForeignInsert = postgresExecForeignInsert,
+        .ExecForeignUpdate = postgresExecForeignUpdate,
+        .ExecForeignDelete = postgresExecForeignDelete,
+        .EndForeignModify = postgresEndForeignModify,
+
+        /* Support functions for EXPLAIN */
+        .ExplainForeignScan = postgresExplainForeignScan,
+        .ExplainForeignModify = postgresExplainForeignModify,
+
+        /* Support functions for ANALYZE */
+        .AnalyzeForeignTable = postgresAnalyzeForeignTable, 
+};
+
 /*
  * Foreign-data wrapper handler function: return a struct with pointers
  * to my callback routines.
@@ -406,34 +435,7 @@ static void freeInsertStmt(ForeignScanState *node);
 Datum
 ppg_fdw_handler(PG_FUNCTION_ARGS)
 {
-	FdwRoutine *routine = makeNode(FdwRoutine);
-
-	/* Functions for scanning foreign tables */
-	routine->GetForeignRelSize = postgresGetForeignRelSize;
-	routine->GetForeignPaths = postgresGetForeignPaths;
-	routine->GetForeignPlan = postgresGetForeignPlan;
-	routine->BeginForeignScan = postgresBeginForeignScan;
-	routine->IterateForeignScan = postgresIterateForeignScan;
-	routine->ReScanForeignScan = postgresReScanForeignScan;
-	routine->EndForeignScan = postgresEndForeignScan;
-
-	/* Functions for updating foreign tables */
-	routine->AddForeignUpdateTargets = postgresAddForeignUpdateTargets;
-	routine->PlanForeignModify = postgresPlanForeignModify;
-	routine->BeginForeignModify = postgresBeginForeignModify;
-	routine->ExecForeignInsert = postgresExecForeignInsert;
-	routine->ExecForeignUpdate = postgresExecForeignUpdate;
-	routine->ExecForeignDelete = postgresExecForeignDelete;
-	routine->EndForeignModify = postgresEndForeignModify;
-
-	/* Support functions for EXPLAIN */
-	routine->ExplainForeignScan = postgresExplainForeignScan;
-	routine->ExplainForeignModify = postgresExplainForeignModify;
-
-	/* Support functions for ANALYZE */
-	routine->AnalyzeForeignTable = postgresAnalyzeForeignTable;
-
-	PG_RETURN_POINTER(routine);
+	PG_RETURN_POINTER(&ppg_fdw_routine);
 }
 
 /*
