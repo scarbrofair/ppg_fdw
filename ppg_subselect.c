@@ -93,7 +93,7 @@ static void handleJt(Query*parse, Node* jtnode, SubPlanPath *planPath)
                         Query      *qry = makeNode(Query);               
                         qry->commandType = CMD_SELECT; 
                         RangeTblRef *rtr = makeNode(RangeTblRef);
-                        RangeTblEntry *newRte = copyObject(getPPGRTEfromQuery(subquery, NULL));
+                        RangeTblEntry *newRte = copyObject(getPPGRTEfromQuery(subquery));
                         newRte->alias = copyObject(rte->alias);
                         newRte->eref = copyObject(rte->eref);
                         qry->rtable = list_make1(newRte);
