@@ -1954,7 +1954,7 @@ static PlannedStmt* ppg_planner(Query *parse, int cursorOptions, ParamListInfo b
 	Assert(glob->finalrtable == NIL);
 	Assert(glob->finalrowmarks == NIL);
 	Assert(glob->resultRelations == NIL);
-	finalrtable = getPPGRTEfromQuery(parse, FDW_handler);
+	finalrtable = getPPGRTEfromQuery(parse);
 	glob->finalrtable = NIL;
 	//traceNode(INFO, "\n output plan %s\n", top_plan);
 	top_plan = set_plan_references(root, top_plan);
