@@ -31,103 +31,103 @@ static bool canJtPush(Query* parse,Node* jtnode,FdwRoutine *fdw_handler);
 
 static bool canQualPush(Query* root,Node* qual,FdwRoutine *fdw_handler);
 
-static RangeTblEntry *getPPGRTEfromJt(Query*parse, Node* jtnode,FdwRoutine *fdw_handler);
+static RangeTblEntry *getPPGRTEfromJt(Query*parse, Node* jtnode);
 
-static RangeTblEntry *getPPGRTEfromQual(Query*parse, Node* qual,FdwRoutine *fdw_handler);
+static RangeTblEntry *getPPGRTEfromQual(Query*parse, Node* qual);
 
-static RangeTblEntry *getPPGRTEfromJt(Query*parse,Node* jtnode, FdwRoutine *fdw_handler)
+static RangeTblEntry *getPPGRTEfromJt(Query*parse,Node* jtnode)
 {
-	RangeTblEntry *rte = NULL;
-	if (jtnode == NULL)
-		return NULL;
-	if (IsA(jtnode, RangeTblRef))
-	{
-		int			varno = ((RangeTblRef *) jtnode)->rtindex;
-		RangeTblEntry *rte = rt_fetch(varno, parse->rtable);
-		if (rte->rtekind == RTE_SUBQUERY) 
-		{
-			return getPPGRTEfromQuery(rte->subquery, fdw_handler);
-		} else if (rte->rtekind == RTE_RELATION && rte->relkind == RELKIND_FOREIGN_TABLE){
-			FdwRoutine *routine = GetFdwRoutineByRelId(rte->relid); 
-			if (routine != NULL) { //&& ((long)(routine->BeginForeignScan) == ((long)(fdw_handler->BeginForeignScan)))) {
-				return rte;
-			}
-		}
-		rte = NULL;
-	} else if (IsA(jtnode, FromExpr)) {
-		FromExpr   *f = (FromExpr *) jtnode;
-		ListCell   *l;
-		foreach(l, f->fromlist) 
-		{
-			rte =  getPPGRTEfromJt(parse, lfirst(l),fdw_handler);
-			if (rte != NULL) {
-				return rte;
-			}
-		}
-		if (parse->hasSubLinks && rte == NULL && f->quals != NULL) {
-			rte = getPPGRTEfromQual(parse, f->quals,fdw_handler);
-		}
-	}
-	else if (IsA(jtnode, JoinExpr))
-	{
-		JoinExpr   *j = (JoinExpr *) jtnode;
+        RangeTblEntry *rte = NULL;
+        if (jtnode == NULL)
+                return NULL;
+        if (IsA(jtnode, RangeTblRef))
+        {
+                int                     varno = ((RangeTblRef *) jtnode)->rtindex;
+                RangeTblEntry *rte = rt_fetch(varno, parse->rtable);
+                if (rte->rtekind == RTE_SUBQUERY) 
+                {
+                        return getPPGRTEfromQuery(rte->subquery);
+                } else if (rte->rtekind == RTE_RELATION && rte->relkind == RELKIND_FOREIGN_TABLE){
+                        FdwRoutine *routine = GetFdwRoutineByRelId(rte->relid); 
+                        if (routine != NULL) { //&& ((long)(routine->BeginForeignScan) == ((long)(fdw_handler->BeginForeignScan)))) {
+                                return rte;
+                        }
+                }
+                rte = NULL;
+        } else if (IsA(jtnode, FromExpr)) {
+                FromExpr   *f = (FromExpr *) jtnode;
+                ListCell   *l;
+                foreach(l, f->fromlist) 
+                {
+                        rte =  getPPGRTEfromJt(parse, lfirst(l));
+                        if (rte != NULL) {
+                                return rte;
+                        }
+                }
+                if (parse->hasSubLinks && rte == NULL && f->quals != NULL) {
+                        rte = getPPGRTEfromQual(parse, f->quals);
+                }
+        }
+        else if (IsA(jtnode, JoinExpr))
+        {
+                JoinExpr   *j = (JoinExpr *) jtnode;
 
-		rte = getPPGRTEfromJt(parse, j->larg,fdw_handler);
-		if (!rte) 
-		{		
-			rte = getPPGRTEfromJt(parse, j->rarg,fdw_handler);
-		}
-		if (parse->hasSubLinks && rte == NULL && j->quals != NULL)
-		{
-			rte = getPPGRTEfromQual(parse,j->quals,fdw_handler);
-		}
-	}
-	return rte ;
+                rte = getPPGRTEfromJt(parse, j->larg);
+                if (!rte)
+                {
+                        rte = getPPGRTEfromJt(parse, j->rarg);
+                }
+                if (parse->hasSubLinks && rte == NULL && j->quals != NULL)
+                {
+                        rte = getPPGRTEfromQual(parse,j->quals);
+                }
+        }
+        return rte ;
 }
 
-static RangeTblEntry *getPPGRTEfromQual(Query*parse, Node* node,FdwRoutine *fdw_handler)
+static RangeTblEntry *getPPGRTEfromQual(Query*parse, Node* node)
 {
-	RangeTblEntry *rte = NULL;
-	if (node == NULL )
-	{
-		return NULL;
-	}
-	if (IsA(node, SubLink)) {
-		SubLink    *sublink = (SubLink *) node;
-		Query	   *subselect = (Query *) (sublink->subselect);
-		rte = getPPGRTEfromQuery(subselect, fdw_handler);
-	} else if (IsA(node, BoolExpr)) {
-		if (((BoolExpr*)node)->boolop == NOT_EXPR) {
-			Node   *sublink = (Node *) get_notclausearg((Expr *) node);
-			rte = getPPGRTEfromQual(parse, sublink, fdw_handler);
-		} else if (IsA(node,BoolExpr)) {
-			ListCell   *l;
-			foreach(l, ((BoolExpr *) node)->args)
-			{
-				Node	   *clause = (Node *) lfirst(l);
-				rte = getPPGRTEfromQual(parse,clause,fdw_handler);
-				if (rte != NULL) {
-					break;
-				}
-			}
-		}
-	}
-	return rte;
+        RangeTblEntry *rte = NULL;
+        if (node == NULL )
+        {
+                return NULL;
+        }
+        if (IsA(node, SubLink)) {
+                SubLink    *sublink = (SubLink *) node;
+                Query      *subselect = (Query *) (sublink->subselect);
+                rte = getPPGRTEfromQuery(subselect);
+        } else if (IsA(node, BoolExpr)) {
+                if (((BoolExpr*)node)->boolop == NOT_EXPR) {
+                        Node   *sublink = (Node *) get_notclausearg((Expr *) node);
+                        rte = getPPGRTEfromQual(parse, sublink);
+                } else if (IsA(node,BoolExpr)) {
+                        ListCell   *l;
+                        foreach(l, ((BoolExpr *) node)->args)
+                        {
+                                Node       *clause = (Node *) lfirst(l);
+                                rte = getPPGRTEfromQual(parse,clause);
+                                if (rte != NULL) {
+                                        break;
+                                }
+                        }
+                }
+        }
+        return rte;
 }
 
-RangeTblEntry *getPPGRTEfromQuery(Query *parse, FdwRoutine *fdw_handler)
+RangeTblEntry *getPPGRTEfromQuery(Query *parse)
 {
-	RangeTblEntry *rte = NULL;
-	// first chech the jointree
-	Node* jtnode = (Node*) parse->jointree;
-	if (jtnode != NULL )
-	{
-		rte = getPPGRTEfromJt(parse, jtnode, fdw_handler);
-	}
-	if (rte == NULL && parse->havingQual != NULL) {
-		rte = getPPGRTEfromQual(parse, parse->havingQual, fdw_handler);
-	}
-	return rte;
+        RangeTblEntry *rte = NULL;
+        // first chech the jointree
+        Node* jtnode = (Node*) parse->jointree;
+        if (jtnode != NULL )
+        {
+                rte = getPPGRTEfromJt(parse, jtnode);
+        }
+        if (rte == NULL && parse->havingQual != NULL) {
+                rte = getPPGRTEfromQual(parse, parse->havingQual);
+        }
+        return rte;
 }
 
 
