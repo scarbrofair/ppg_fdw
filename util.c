@@ -153,7 +153,7 @@ static bool canJtPush(Query*parse,Node* jtnode,FdwRoutine *fdw_handler)
 			}
 		} else if (rte->rtekind == RTE_RELATION && rte->relkind == RELKIND_FOREIGN_TABLE) {
 			routine = GetFdwRoutineByRelId(rte->relid);
-			if ((routine != NULL)) {
+			if ((routine != NULL) &&　routine == fdw_handler) {
 				//	&& ((long)(routine->BeginForeignScan) == ((long)(fdw_handler->BeginForeignScan)))) {
 				canPush = true;;
 			}
