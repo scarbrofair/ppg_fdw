@@ -1387,13 +1387,6 @@ ppg_grouping_planner(PlannerInfo *root, double tuple_fraction)
 		}  else if (root->sort_pathkeys) {
 			current_pathkeys = root->sort_pathkeys;
 		}
-	
-		if (parse->hasAggs)
-		{				
-			count_agg_clauses(root, (Node *) tlist, &agg_costs);
-			count_agg_clauses(root, parse->havingQual, &agg_costs);
-			preprocess_minmax_aggregates(root, tlist);
-		}
 
 		if (parse->groupClause || parse->distinctClause || parse->hasAggs ||
 			parse->hasWindowFuncs || root->hasHavingQual) {
